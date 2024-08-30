@@ -1,5 +1,5 @@
-<div align="center" style="font-family: Arial, sans-serif; color: #333;">
-    <h2>ساخت لینک اشتراک و کنترل پنل مدیریت اشتراکها</h2>
+
+    <h2>ساخت لینک اشتراک و پنل مدیریت اشتراکها</h2>
    
 </div>
   <p align="center"> 
