@@ -570,7 +570,6 @@ function getStyles() {
       --text-color: #333;
       --border-color: #e0e0e0;
     }
-  
     body {
       background-color: var(--background-color);
       color: var(--text-color);
@@ -632,6 +631,17 @@ function getStyles() {
     textarea {
       resize: vertical;
     }
+    .input-group button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 5px;
+      background-color: #007bff;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+      margin-top: 10px;
+    }
     .btn {
       padding: 10px 15px;
       font-size: 1rem;
@@ -654,7 +664,6 @@ function getStyles() {
       background-color: var(--secondary-color);
       color: #fff;
     }
-
     .btn-secondary:hover {
       background-color: #e69512;
     }
