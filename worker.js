@@ -219,7 +219,7 @@ function handleInputPanel() {
       <div class="container">
         <h1>⚙️ Manage Subscriptions</h1>
         <section class="content-section">
-          <h2>🪄Create New SUB</h2>
+          <h2>🪄Create SUB</h2>
           <form method="POST" action="/new">
             <div class="input-group">
               <label for="new-content">Enter Content:</label>
