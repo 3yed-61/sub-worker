@@ -3,7 +3,7 @@ export default {
     try {
       const url = new URL(request.url);
       const path = url.pathname;
-      
+
       // Redirect to panel if user is already logged in
       if (isAuthenticated(request) && (path === '/' || path === '/')) {
         return redirectToPanel();
@@ -25,6 +25,11 @@ export default {
         return await handleContentCreation(request, env);
       } else if (request.method === 'POST' && path === '/edit') {
         return await handleContentEdit(request, env);
+      }
+      // New GET /edit route to display the edit page for a specific SUB
+      else if (request.method === 'GET' && path === '/edit') {
+        const uuid = url.searchParams.get('uuid');
+        return await handleEditPage(uuid, env);
       } else if (request.method === 'POST' && path === '/delete') {
         return await handleContentDeletion(request, env);
       } else if (request.method === 'POST' && path === '/fetch') {
@@ -115,8 +120,11 @@ async function handleContentDeletion(request, env) {
 
   await env.sub.delete(uuid);
   return new Response('Content deleted successfully!', {
-    status: 200,
-    headers: { 'Content-Type': 'text/plain' },
+    status: 302,
+    headers: {
+      'Location': '/panel',  // Redirect to the main page
+      'Content-Type': 'text/plain',
+    },
   });
 }
 
@@ -124,9 +132,120 @@ async function handleContentDeletion(request, env) {
 async function handleFetchContent(request, env) {
   const formData = await request.formData();
   const uuid = formData.get('uuid');
+
+  if (uuid === 'all') {
+    // Handle fetching all SUBS
+    return await handleFetchAllSubs(env);
+  }
+
   const content = await env.sub.get(uuid);
 
   return content ? renderEditContentForm(uuid, content) : new Response('Content not found.', { status: 404 });
+}
+
+// Handle fetching and displaying all SUBs
+async function handleFetchAllSubs(env) {
+  // List all keys in the KV namespace
+  const listResponse = await env.sub.list({ prefix: '', limit: 1000 }); // Adjust limit as needed
+
+  // Filter out the 'password' key
+  const subs = listResponse.keys.filter(key => key.name !== 'password').map(key => key.name);
+
+  if (subs.length === 0) {
+    return renderHTML(`
+      <h1>📄 All SUBs</h1>
+      <p>No subscriptions found.</p>
+      <div class="actions">
+        <a href="/panel" class="btn btn-secondary">Back to Panel</a>
+      </div>
+    `);
+  }
+
+  // Pagination variables
+  const itemsPerPage = 20;
+  const totalPages = Math.ceil(subs.length / itemsPerPage);
+  const currentPage = 1; // For simplicity, start at page 1. Implement query parameter for dynamic pages if needed.
+
+  // Slice the subs array for current page
+  const paginatedSubs = subs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  // Generate HTML table rows
+  const subsRowsHTML = paginatedSubs.map(subUuid => `
+    <tr>
+      <td>${subUuid}</td>
+      <td>
+        <a href="/edit?uuid=${encodeURIComponent(subUuid)}" class="btn btn-primary btn-sm">Edit</a>
+        <form method="POST" action="/delete" style="display: inline;">
+          <input type="hidden" name="uuid" value="${subUuid}">
+          <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this SUB?');">Delete</button>
+        </form>
+      </td>
+    </tr>
+  `).join('');
+
+  // Pagination controls (if needed)
+  let paginationHTML = '';
+  if (totalPages > 1) {
+    paginationHTML = '<div class="pagination">';
+    for (let i = 1; i <= totalPages; i++) {
+      paginationHTML += `<a href="/fetch-all?page=${i}" class="btn btn-secondary btn-sm ${i === currentPage ? 'active' : ''}">${i}</a> `;
+    }
+    paginationHTML += '</div>';
+  }
+
+  return renderHTML(`
+    <h1>📄 All SUBS</h1>
+    <table>
+      <thead>
+        <tr>
+          <th>UUID</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${subsRowsHTML}
+      </tbody>
+    </table>
+    ${paginationHTML}
+    <div class="actions">
+      <a href="/panel" class="btn btn-secondary">Back to Panel</a>
+    </div>
+  `);
+}
+
+// handler to display the edit page for a specific SUB
+async function handleEditPage(uuid, env) {
+  if (!uuid) {
+    return new Response('UUID is required.', {
+      status: 400,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+
+  const content = await env.sub.get(uuid);
+
+  if (!content) {
+    return new Response('Content not found.', { status: 404 });
+  }
+
+  return renderHTML(`
+    <h1>Edit Content for UUID: ${uuid}</h1>
+    <form method="POST" action="/edit">
+      <input type="hidden" name="uuid" value="${uuid}">
+      <div class="input-group">
+        <label for="edit-content">Edit Content:</label>
+        <textarea id="edit-content" name="content" rows="4" required>${content}</textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">Update Content</button>
+    </form>
+    <form method="POST" action="/delete" style="margin-top: 20px;">
+      <input type="hidden" name="uuid" value="${uuid}">
+      <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this SUB?');">Delete Sub</button>
+    </form>
+    <div class="actions" style="margin-top: 20px;">
+      <a href="/panel" class="btn btn-secondary">Back to Panel</a>
+    </div>
+  `);
 }
 
 // Display content
@@ -139,7 +258,7 @@ async function handleDisplayContent(uuid, env) {
 async function processLogin(request, env) {
   const formData = await request.formData();
   const password = formData.get('password');
-  
+
   if (!password) {
     return new Response('Password is required.', {
       status: 400,
@@ -274,7 +393,7 @@ function renderSetPasswordForm() {
 function renderLoginForm(error = '') {
   return renderHTML(`
     <h1>🔐 Login</h1>
-    ${error ? `<p style="color: red;">${error}</p>` : ''}
+    ${error ? `<p class="error">${error}</p>` : ''}
     <form method="POST" action="/">
       <div class="input-group">
         <label for="password">Enter Password:</label>
@@ -297,7 +416,7 @@ function renderControlPanel() {
         </div>
         <div class="input-group">
           <label for="new-uuid">Enter UUID (optional):</label>
-          <input type="text" id="new-uuid" name="uuid">
+          <input type="text" id="new-uuid" name="uuid" placeholder="Leave blank to generate automatically">
         </div>
         <button type="submit" class="btn btn-primary">Create SUB</button>
       </form>
@@ -306,21 +425,20 @@ function renderControlPanel() {
       <h2>✍️ Edit Existing SUB</h2>
       <form method="POST" action="/fetch">
         <div class="input-group">
-          <label for="edit-uuid">Enter UUID:</label>
-          <input type="text" id="edit-uuid" name="uuid" required>
+          <label for="edit-uuid">Enter UUID or "all":</label>
+          <input type="text" id="edit-uuid" name="uuid" required placeholder='e.g., "all" to display all SUBs'>
         </div>
         <button type="submit" class="btn btn-secondary">Fetch Content</button>
       </form>
     </section>
     <footer class="footer">
-    <a href="https://github.com/3yed-61"><i class="fa fa-github" style="font-size:30px;"></i></a>
+      <a href="https://github.com/3yed-61" target="_blank"><i class="fa fa-github" style="font-size:30px;"></i></a>
 
       <form method="POST" action="/logout" style="display: inline;">
         <button type="submit" class="btn btn-danger">Log Out</button>
       </form>
       <button class="btn btn-info" onclick="openChangePasswordModal()">Change Password</button>
     </footer>
-
 
     ${renderChangePasswordModal()}
     <script>
@@ -343,7 +461,7 @@ function renderContentCreationSuccess(uuid, url) {
     <div class="input-group">
       <label for="sub-link">Link:</label>
       <input type="text" id="sub-link" value="${fullUrl}" readonly>
-      <button onclick="copyToClipboard()">Copy</button>
+      <button type="button" class="btn btn-secondary" onclick="copyToClipboard()">Copy</button>
     </div>
     <div class="qr-code">
       <img src="${qrCodeUrl}" alt="QR Code">
@@ -355,6 +473,7 @@ function renderContentCreationSuccess(uuid, url) {
       function copyToClipboard() {
         const copyText = document.getElementById("sub-link");
         copyText.select();
+        copyText.setSelectionRange(0, 99999); // For mobile devices
         document.execCommand("copy");
         alert("Link copied to clipboard!");
       }
@@ -369,26 +488,17 @@ function renderEditContentForm(uuid, content) {
       <input type="hidden" name="uuid" value="${uuid}">
       <div class="input-group">
         <label for="edit-content">Edit Content:</label>
-        <textarea id="edit-content" name="content" rows="4">${content}</textarea>
+        <textarea id="edit-content" name="content" rows="4" required>${content}</textarea>
       </div>
       <button type="submit" class="btn btn-primary">Update Content</button>
     </form>
     <form method="POST" action="/delete" style="margin-top: 20px;">
       <input type="hidden" name="uuid" value="${uuid}">
-      <button type="button" class="btn btn-danger" onclick="openDeleteModal()">Delete Sub</button>
+      <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this SUB?');">Delete Sub</button>
     </form>
     <div class="actions" style="margin-top: 20px;">
       <a href="/panel" class="btn btn-secondary">Back to Panel</a>
     </div>
-    ${renderDeleteContentModal(uuid)}
-    <script>
-      function openDeleteModal() {
-        document.getElementById('delete-modal').style.display = 'block';
-      }
-      function closeDeleteModal() {
-        document.getElementById('delete-modal').style.display = 'none';
-      }
-    </script>
   `);
 }
 
@@ -410,19 +520,36 @@ function renderChangePasswordModal() {
   `;
 }
 
-function renderDeleteContentModal(uuid) {
-  return `
-    <div id="delete-modal" class="modal">
-      <div class="modal-content">
-        <span class="close" onclick="closeDeleteModal()">&times;</span>
-        <h1>🗑️ Confirm Deletion</h1>
-        <p>Are you sure you want to delete the SUB: ${uuid}?</p>
-        <form method="POST" action="/delete">
-          <input type="hidden" name="uuid" value="${uuid}">
-          <button type="submit" class="btn btn-danger">Yes, Delete</button>
-          <button type="button" class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+// Render all SUBs in a table format
+function renderAllSubsTable(subs) {
+  const subsRowsHTML = subs.map(subUuid => `
+    <tr>
+      <td>${subUuid}</td>
+      <td>
+        <a href="/edit?uuid=${encodeURIComponent(subUuid)}" class="btn btn-primary btn-sm">Edit</a>
+        <form method="POST" action="/delete" style="display: inline;">
+          <input type="hidden" name="uuid" value="${subUuid}">
+          <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this SUB?');">Delete</button>
         </form>
-      </div>
+      </td>
+    </tr>
+  `).join('');
+
+  return `
+    <h1>📄 All SUBs</h1>
+    <table>
+      <thead>
+        <tr>
+          <th>UUID</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${subsRowsHTML}
+      </tbody>
+    </table>
+    <div class="actions">
+      <a href="/panel" class="btn btn-secondary">Back to Panel</a>
     </div>
   `;
 }
@@ -434,7 +561,6 @@ function renderHTML(content) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <link href="https://services.3yed.space/images/logo1.png" rel="icon" type="image/png">
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
       <title>Secure Panel</title>
       ${getStyles()}
@@ -475,7 +601,7 @@ function getStyles() {
         min-height: 100vh;
       }
       .container {
-        max-width: 600px;
+        max-width: 800px;
         padding: 2rem;
         background-color: #fff;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -488,6 +614,7 @@ function getStyles() {
         font-size: 1.8rem;
         margin-bottom: 1rem;
         color: #007bff;
+        text-align: center;
       }
       h2 {
         font-size: 1.3rem;
@@ -503,59 +630,45 @@ function getStyles() {
       label {
         display: block;
         margin-bottom: 0.5rem;
+        font-weight: bold;
       }
       input[type="text"],
       input[type="password"],
       textarea {
-        width: 95%;
+        width: 100%;
         padding: 0.75rem;
         border: 1px solid #e0e0e0;
         border-radius: 4px;
-        font-size: 0.75rem;
+        font-size: 1rem;
+        box-sizing: border-box;
       }
       textarea {
         resize: vertical;
       }
-      .input-group button {
-        padding: 8px 16px;
+      button, .btn {
+        padding: 10px 20px;
         border: none;
         border-radius: 5px;
-        background-color: #007bff;
+        background-color: var(--primary-color);
         color: white;
-        font-size: 14px;
+        font-size: 1rem;
         cursor: pointer;
         margin-top: 10px;
+        transition: background-color 0.3s ease;
       }
-      .btn {
-        padding: 10px 15px;
-        font-size: 0.8rem;
-        text-align: center;
-        border-radius: 4px;
-        cursor: pointer;
-        border: none;
-        color: #fff;
-      }
-      .btn:hover {
-        transform: translateY(-2px);
-      }
-      .btn-primary {
-        background-color: var(--primary-color);
-        color: #fff;
-      }
-      .btn-primary:hover {
+      button:hover, .btn:hover {
         background-color: #1a5276;
       }
       .btn-secondary {
         background-color: var(--secondary-color);
-        color: #fff;
       }
       .btn-secondary:hover {
         background-color: #966615;
       }
-      .btn-info{
+      .btn-info {
         background-color: var(--info-color);
       }
-      .btn-info:hover{
+      .btn-info:hover {
         background-color: #04464d;
       }
       .btn-danger {
@@ -563,6 +676,10 @@ function getStyles() {
       }
       .btn-danger:hover {
         background-color: #911723;
+      }
+      .btn-sm {
+        padding: 5px 10px;
+        font-size: 0.8rem;
       }
       .content-section {
         margin-bottom: 2rem;
@@ -581,6 +698,27 @@ function getStyles() {
         background-color: #f1f1f1;
         text-align: center;
         position: relative;
+        border-radius: 8px;
+      }
+      /* Table Styles */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+      }
+      table, th, td {
+        border: 1px solid var(--border-color);
+      }
+      th, td {
+        padding: 12px;
+        text-align: left;
+      }
+      th {
+        background-color: var(--secondary-color);
+        color: white;
+      }
+      tr:nth-child(even) {
+        background-color: #f9f9f9;
       }
       /* Modal styles */
       .modal {
@@ -616,10 +754,42 @@ function getStyles() {
         text-decoration: none;
         cursor: pointer;
       }
+      .error {
+        color: red;
+        margin-bottom: 1rem;
+        text-align: center;
+      }
       @media (max-width: 600px) {
         .container {
           padding: 1rem;
         }
+        th, td {
+          padding: 8px;
+        }
+        button, .btn {
+          font-size: 0.9rem;
+          padding: 8px 16px;
+        }
+      }
+      /* Pagination Styles */
+      .pagination {
+        margin-top: 20px;
+        text-align: center;
+      }
+      .pagination a {
+        margin: 0 5px;
+        padding: 8px 12px;
+        text-decoration: none;
+        color: white;
+        background-color: var(--secondary-color);
+        border-radius: 4px;
+        transition: background-color 0.3s ease;
+      }
+      .pagination a.active {
+        background-color: var(--primary-color);
+      }
+      .pagination a:hover:not(.active) {
+        background-color: #966615;
       }
     </style>
   `;
